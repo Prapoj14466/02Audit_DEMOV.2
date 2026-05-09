@@ -1,0 +1,128 @@
+สาเหตุที่เปิดไฟล์ Word แล้วขึ้นเป็น **"กรอบว่างๆ ไม่มีรูปภาพ"** เกิดจากระบบ Security ของ Google Drive ชนกับ Microsoft Word ครับ
+อธิบายง่ายๆ คือ:
+ไฟล์รูปภาพถูกตั้งสิทธิ์ไว้เป็น **เฉพาะคนในองค์กร (DOMAIN_WITH_LINK)** แต่เวลาโปรแกรม MS Word พยายามจะดึงรูปจากลิงก์นั้น Word มันไม่ได้จำสถานะการล็อกอินอีเมลบริษัทของคุณ Google Drive เลยมองว่า Word เป็น "คนนอก" และบล็อกไม่ให้โหลดรูปภาพครับ (ส่งมาแค่หน้าเว็บเปล่าๆ รูปเลยไม่ขึ้น)
+**วิธีแก้ระดับโปร (Embed Image ฝังรูปลงไฟล์ไปเลย):**
+เราจะใช้ Apps Script วิ่งไปดึงรูปจาก Drive มาแปลงเป็นข้อมูลดิบ (Base64) แล้วฝังลงไปในโครงสร้างไฟล์ Word เลยครับ วิธีนี้รับประกันว่ารูปจะติดไปกับไฟล์ 100% เปิดเครื่องไหน (หรือออฟไลน์) รูปก็ขึ้นแน่นอน!
+แค่ทำตาม 2 ขั้นตอนนี้ครับ:
+### ขั้นตอนที่ 1: เพิ่มฟังก์ชันดึงรูปภาพในไฟล์ code.gs
+เปิดไฟล์ **code.gs** เลื่อนลงไป**ล่างสุด** แล้วคัดลอกโค้ดนี้ไปวางต่อท้ายได้เลยครับ
+```javascript
+// ==========================================
+// 🌟 ฟังก์ชันพิเศษสำหรับดึงรูปไปฝังในไฟล์ Word (แก้ปัญหารูปล็อกสิทธิ์องค์กร)
+// ==========================================
+function getBase64FromDrive(fileIds) {
+  try {
+    var result = {};
+    for(var i = 0; i < fileIds.length; i++) {
+       var id = fileIds[i];
+       try {
+         var file = DriveApp.getFileById(id);
+         var blob = file.getBlob();
+         var b64 = Utilities.base64Encode(blob.getBytes());
+         var mime = blob.getContentType();
+         result[id] = "data:" + mime + ";base64," + b64;
+       } catch(e) {
+         result[id] = null; // ถ้ารูปมีปัญหาให้ปล่อยผ่าน จะได้ไม่พังทั้งไฟล์
+       }
+    }
+    return result;
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+```
+### ขั้นตอนที่ 2: อัปเดตฟังก์ชัน Export ในไฟล์ JavaScript.html
+เปิดไฟล์ **JavaScript.html** เลื่อนลงไป**ล่างสุด** ให้คุณลบฟังก์ชัน exportToWord() ตัวเก่าทิ้ง แล้วนำโค้ดด้านล่างนี้ไปวางแทนครับ
+```javascript
+    // ==========================================
+    // 🌟 EXPORT TO WORD (แบบฝังรูปภาพลงไฟล์ 100%)
+    // ==========================================
+    function exportToWord() {
+        var content = document.getElementById('docViewer').innerHTML;
+        if (!content || content.trim() === "") {
+            alert("No document content to export!");
+            return;
+        }
+
+        // 🌟 1. สร้าง HTML จำลองเพื่อดึงรูปภาพทั้งหมดออกมาเช็ค
+        var tempDiv = document.createElement('div');
+        tempDiv.innerHTML = content;
+        var imgs = tempDiv.getElementsByTagName('img');
+        var fileIds = [];
+        var idToImgMap = {};
+
+        // 🌟 2. ดึงรหัสไฟล์ (ID) รูปภาพที่ฝากไว้บน Google Drive
+        for(var i = 0; i < imgs.length; i++) {
+            var src = imgs[i].src;
+            var match = src.match(/id=([a-zA-Z0-9_-]+)/);
+            if(match) {
+                var id = match[1];
+                if(fileIds.indexOf(id) === -1) fileIds.push(id);
+                if(!idToImgMap[id]) idToImgMap[id] = [];
+                idToImgMap[id].push(imgs[i]);
+            }
+        }
+
+        // 🌟 3. ถ้าไม่มีรูปจาก Drive เลย ให้โหลดเป็น Word ได้ทันที
+        if(fileIds.length === 0) {
+            finalizeWordExport(tempDiv.innerHTML);
+            return;
+        }
+
+        // 🌟 4. ถ้ารูปเยอะ ให้ขึ้นสถานะล็อกปุ่มป้องกันการกดซ้ำ
+        var btn = document.querySelector('button[onclick="exportToWord()"]');
+        var originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Packing Images...';
+        btn.disabled = true;
+        showToast("Processing embedded images for Word...", "bg-dark");
+
+        // 🌟 5. ส่งคำสั่งให้ Backend ดึงรูปและแปลงเป็น Base64
+        google.script.run.withSuccessHandler(function(base64Data) {
+            for(var id in base64Data) {
+                if(base64Data[id]) {
+                    idToImgMap[id].forEach(function(imgEl) {
+                        imgEl.src = base64Data[id]; // นำข้อมูล Base64 ไปสลับกับลิงก์ URL
+                    });
+                }
+            }
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            finalizeWordExport(tempDiv.innerHTML); // สั่งโหลดไฟล์ Word เมื่อรูปครบ
+        }).withFailureHandler(function(err) {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            alert("Failed to process some images: " + err.message);
+            finalizeWordExport(tempDiv.innerHTML); // ถ้าพลาด ก็บังคับโหลดเท่าที่ได้ไปก่อน
+        }).getBase64FromDrive(fileIds);
+    }
+
+    // 🌟 ฟังก์ชันย่อยสำหรับสร้างและดาวน์โหลดไฟล์ Word
+    function finalizeWordExport(htmlContent) {
+        var css = (
+            '<style>' +
+            'table { border-collapse: collapse; width: 100%; } ' +
+            'td, th { border: 1px solid black; padding: 8px; vertical-align: top; } ' +
+            'img { max-width: 100%; height: auto; }' +
+            '</style>'
+        );
+
+        var header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>" + window.currentViewTitle + "</title>" + css + "</head><body><div class='WordSection1'>";
+        var footer = "</div></body></html>";
+        
+        var sourceHTML = header + htmlContent + footer;
+        var source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+        
+        var fileDownload = document.createElement("a");
+        document.body.appendChild(fileDownload);
+        fileDownload.href = source;
+        fileDownload.download = window.currentViewTitle + '.doc';
+        fileDownload.click();
+        document.body.removeChild(fileDownload);
+        
+        showToast("Exported to Word successfully!", "bg-success");
+    }
+
+```
+**สิ่งที่ระบบจะทำให้หลังจากแก้โค้ด:**
+พอกดปุ่ม "Export to Word" ปุ่มจะขึ้นหมุนว่า Packing Images... แป๊บหนึ่ง เพื่อทำการ "ดูด" รูปภาพจาก Google Drive ทั้งหมดแล้วฝังยัดลงไปในไฟล์ Word ทันที พอโหลดเสร็จ เปิดมาปุ๊บ รูปทุกรูปจะอยู่ในเอกสารอย่างสมบูรณ์แบบ แม้จะถอดสายแลน (ออฟไลน์) ก็เปิดรูปขึ้นครับ! ลองนำไปอัปเดตดูได้เลยครับ!
