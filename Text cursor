@@ -1,0 +1,62 @@
+เข้าใจปัญหาเลยครับคุณ Yoyo! อาการนี้เป็นปัญหาคลาสสิกเลยครับ เวลาไฟล์ขนาดใหญ่กำลังอัปโหลดอยู่ ถ้าเราเผลอไปพิมพ์หรือคลิกบรรทัดอื่น Text Cursor (Caret) จะย้ายไปที่ใหม่ พออัปโหลดเสร็จระบบเลยเอาไฟล์ไปแทรกตรงที่ Cursor อยู่ล่าสุดแทน
+วิธีแก้ระดับโปรคือ เราจะสร้าง **"ตัวจองพื้นที่ (Placeholder)"** เอาไว้ครับ
+หลักการคือ ทันทีที่คุณกดเลือกไฟล์ ระบบจะหย่อนข้อความ/ไอคอน "⏳ กำลังอัปโหลด..." ไว้ตรงจุดที่คุณกดทันที (เป็นการล็อกตำแหน่งไว้) และพอไฟล์โหลดเสร็จ มันก็จะวิ่งกลับไปแทนที่ตัวจองพื้นที่นั้นโดยอัตโนมัติ ไม่ว่าตอนนั้นคุณจะเอาเมาส์ไปคลิกที่ไหนแล้วก็ตามครับ
+วิธีทำ ให้คุณเข้าไปที่ไฟล์ **JavaScript.html** มองหาฟังก์ชันที่ชื่อ editor.ui.registry.addButton('customFileBtn', { ... })
+แล้ว **ก๊อปปี้โค้ดด้านล่างนี้ ไปวางทับโค้ดปุ่ม customFileBtn เดิมทั้งหมด** ได้เลยครับ:
+```javascript
+                editor.ui.registry.addButton('customFileBtn', {
+                    icon: 'upload',
+                    tooltip: 'Upload Document / File',
+                    onAction: function () {
+                        var input = document.createElement('input');
+                        input.setAttribute('type', 'file');
+                        input.onchange = function () {
+                            var file = this.files[0];
+                            if (!file) return;
+
+                            // 🌟 1. สร้าง ID จำเพาะสำหรับตัวจองพื้นที่ (Placeholder)
+                            var uniqueId = 'upload-placeholder-' + new Date().getTime();
+
+                            // 🌟 2. แทรก Placeholder เพื่อล็อกตำแหน่งไว้ที่ Cursor ปัจจุบันทันที!
+                            var placeholderHtml = `<span id="${uniqueId}" style="background-color: #f8f9fa; border: 1px dashed #adb5bd; color: #6c757d; padding: 4px 12px; border-radius: 20px; font-size: 0.9em; font-style: italic; display: inline-block; margin: 2px 4px; vertical-align: middle;" contenteditable="false">⏳ กำลังอัปโหลด: ${file.name}...</span>`;
+                            editor.insertContent(placeholderHtml);
+
+                            showToast("Uploading file to document...", "bg-dark");
+                            var reader = new FileReader();
+                            reader.readAsDataURL(file);
+                            reader.onload = function () {
+                                google.script.run.withSuccessHandler(function(url) {
+                                    
+                                    // 🌟 3. โค้ดปุ่มไฟล์ของจริงที่สำเร็จแล้ว
+                                    var linkHtml = `<a href="${url}" target="_blank" rel="noopener noreferrer" contenteditable="false" style="background-color: #e0f2fe; border: 1px solid #7dd3fc; color: #0369a1; padding: 4px 12px; border-radius: 20px; font-size: 0.9em; font-weight: 600; display: inline-block; cursor: pointer; margin: 2px 4px; vertical-align: middle; text-decoration: none;" title="View Attached File">📎 ${file.name}</a>&nbsp;`;
+
+                                    // 🌟 4. วิ่งกลับไปหา Placeholder ตัวเดิมเพื่อเอาปุ่มจริงไปสลับที่ (ไม่สนว่า Cursor ไปอยู่ไหนแล้ว)
+                                    var editorDoc = editor.getDoc();
+                                    var placeholderNode = editorDoc.getElementById(uniqueId);
+                                    if (placeholderNode) {
+                                        placeholderNode.outerHTML = linkHtml;
+                                    } else {
+                                        // เผื่อผู้ใช้เผลอลบตัวจองพื้นที่ทิ้งไปก่อนโหลดเสร็จ ก็ให้แทรกที่ Cursor แทน
+                                        editor.insertContent(linkHtml);
+                                    }
+
+                                    showToast("File inserted successfully!", "bg-success");
+                                }).withFailureHandler(function(error) {
+                                    
+                                    // 🌟 ถ้าอัปโหลดล้มเหลว ก็เปลี่ยนตัวจองพื้นที่เป็นข้อความสีแดงเตือนแทน
+                                    var editorDoc = editor.getDoc();
+                                    var placeholderNode = editorDoc.getElementById(uniqueId);
+                                    if (placeholderNode) {
+                                        placeholderNode.outerHTML = `<span style="color: #dc3545; font-size: 0.9em;">❌ Upload Failed: ${file.name}</span>`;
+                                    }
+                                    alert("Upload failed: " + error.message);
+                                    
+                                }).uploadMediaToDrive(reader.result, file.name, false);
+                            };
+                        };
+                        input.click();
+                    }
+                });
+
+```
+หลังจากเซฟแล้ว ลองกดอัปโหลดไฟล์ดูครับ คุณจะเห็นไอคอนกล่องจางๆ ขึ้นว่า "⏳ กำลังอัปโหลด..." ล็อกตำแหน่งไว้ให้เลย ทีนี้ระหว่างรอไฟล์ใหญ่ๆ โหลด คุณก็สามารถไปพิมพ์เนื้อหาหรือจัดหน้าบรรทัดอื่นรอไปพลางๆ ได้อย่างสบายใจเลยครับ!
