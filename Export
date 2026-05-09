@@ -1,0 +1,101 @@
+ไอเดียเยี่ยมมากครับคุณ Yoyo! การเพิ่มปุ่ม **Export ออกมาเป็นไฟล์ Word (.doc)** จะช่วยให้ทีม Production Engineering นำเอกสารไปปริ้นท์ นำเสนอ หรือแนบอีเมลส่งต่อได้สะดวกขึ้นเยอะเลยครับ
+เพื่อให้สอดคล้องกับ **IT Policy ของบริษัท** (ไม่ต้องไปยุ่งกับการเปิดสิทธิ์ Advanced Drive API ให้วุ่นวาย และไม่สร้างไฟล์ขยะใน Google Drive เต็มไปหมด) ผมจะใช้เทคนิค **Client-Side Export** ครับ
+หลักการคือ ทันทีที่คุณกดปุ่ม รูปแบบตาราง ตัวอักษร และเนื้อหาทั้งหมดที่อยู่ในหน้าจอ View จะถูกแปลงเป็นโครงสร้างของไฟล์ MS Word และดาวน์โหลดลงเครื่องคอมพิวเตอร์ของคุณทันที!
+เราจะเพิ่มฟีเจอร์นี้โดยการอัปเดตแค่ **2 ไฟล์** เท่านั้นครับ (ไฟล์ code.gs และ Stylesheet.html ไม่ต้องแก้ ปล่อยไว้เหมือนเดิมได้เลย)
+### ขั้นตอนที่ 1: เพิ่มปุ่ม Export ในหน้า 01.CustomerAudit.html
+ให้คุณเปิดไฟล์นี้ขึ้นมา เลื่อนลงมาหาโค้ดส่วนที่เป็น `` แล้วมองหา Modal ที่ชื่อว่า viewDocModal
+ให้แทนที่โค้ดส่วน <div class="modal-header bg-dark text-white"> ... </div> ด้วยโค้ดใหม่นี้ครับ (เราจะเพิ่มปุ่มสีน้ำเงินเข้าไป)
+```html
+    <div class="modal fade" id="viewDocModal" tabindex="-1">
+        <div class="modal-dialog modal-xl-custom">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-file-text"></i> View Document</h5>
+                    <div>
+                        <button class="btn btn-sm btn-primary me-2 fw-bold" onclick="exportToWord()"><i class="bi bi-file-word"></i> Export to Word</button>
+                        
+                        <button class="btn btn-sm btn-outline-light me-3 fw-bold" onclick="loadData01(); loadData03(); showToast('Data refreshed!', 'bg-success');"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+                        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                </div>
+                <div class="modal-body bg-light">
+                    <div id="docViewer" class="doc-preview-box"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+```
+### ขั้นตอนที่ 2: เพิ่มระบบดาวน์โหลดในไฟล์ JavaScript.html
+เปิดไฟล์ JavaScript.html ขึ้นมา แล้วทำตามนี้ครับ:
+**1. อัปเดตฟังก์ชัน viewDocument (ให้จำชื่อเอกสารไว้ใช้ตั้งชื่อไฟล์ดาวน์โหลด)**
+ค้นหาบรรทัด function viewDocument(safeContentStr) { แล้วเปลี่ยนกลุ่มโค้ดนั้นให้เป็นแบบนี้ครับ:
+```javascript
+    // ==========================================
+    // 🌟 EDITOR & VIEW FUNCTIONS 
+    // ==========================================
+    
+    // 🌟 ตัวแปรเก็บชื่อไฟล์ปัจจุบัน
+    window.currentViewTitle = "Exported_Document"; 
+
+    function viewDocument(docTitle, safeContentStr) {
+        window.currentViewTitle = docTitle || "Audit_Document";
+        var htmlContent = decodeURIComponent(safeContentStr);
+        document.getElementById('docViewer').innerHTML = htmlContent; 
+        new bootstrap.Modal(document.getElementById('viewDocModal')).show();
+    }
+
+```
+**2. อัปเดตปุ่ม View ในฟังก์ชัน renderTable01 และ renderTable03**
+เพื่อให้มันส่งชื่อเอกสารไปให้ฟังก์ชันด้านบน ค้นหาบรรทัดที่มีการสร้างปุ่ม View (สังเกตคำว่า <button class="btn btn-outline-primary... View</button>) **ทั้งในหน้า 01 และ 03** แล้วเปลี่ยนใหม่เป็นแบบนี้ครับ:
+```javascript
+// เปลี่ยนโค้ดปุ่ม View เป็น:
+${isCompleted ? `<button class="btn btn-outline-primary btn-sm me-1 shadow-sm" onclick="event.stopPropagation(); viewDocument('${node.title.replace(/'/g, "\\'")}', '${safeContent}')"><i class="bi bi-eye"></i> View</button>` : ''}
+
+```
+**3. เพิ่มฟังก์ชันโหลดไฟล์ exportToWord**
+เลื่อนลงไป**ล่างสุด**ของไฟล์ JavaScript.html (ก่อนแท็กปิด </script>) แล้วแปะฟังก์ชันสุดเจ๋งนี้เข้าไปเลยครับ:
+```javascript
+    // ==========================================
+    // 🌟 EXPORT TO WORD (CLIENT-SIDE)
+    // ==========================================
+    function exportToWord() {
+        var content = document.getElementById('docViewer').innerHTML;
+        if (!content || content.trim() === "") {
+            alert("No document content to export!");
+            return;
+        }
+
+        // 🌟 แทรก CSS เพื่อให้ตารางตอนเปิดใน Word มีเส้นขอบชัดเจน และเป็นแนวตั้ง/แนวนอนได้
+        var css = (
+            '<style>' +
+            'table { border-collapse: collapse; width: 100%; } ' +
+            'td, th { border: 1px solid black; padding: 8px; vertical-align: top; }' +
+            '</style>'
+        );
+
+        // 🌟 โครงสร้าง XML ของ Microsoft Word
+        var header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>" + window.currentViewTitle + "</title>" + css + "</head><body><div class='WordSection1'>";
+        var footer = "</div></body></html>";
+        
+        var sourceHTML = header + content + footer;
+        
+        // 🌟 แปลงเป็นไฟล์ .doc แล้วสั่งดาวน์โหลด
+        var source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+        var fileDownload = document.createElement("a");
+        document.body.appendChild(fileDownload);
+        fileDownload.href = source;
+        fileDownload.download = window.currentViewTitle + '.doc';
+        fileDownload.click();
+        document.body.removeChild(fileDownload);
+        
+        showToast("Exported to Word successfully!", "bg-success");
+    }
+
+```
+### สิ่งที่คุณจะได้จากการแก้ไขครั้งนี้:
+ 1. พอคุณกด View เพื่อดูเอกสาร จะมีปุ่ม **Export to Word** โผล่ขึ้นมาด้านบน
+ 2. พอกดปุ่มปุ๊บ ระบบจะดึงตาราง รูปภาพ (ที่เป็นลิงก์) และข้อความทั้งหมด โหลดลงมาเป็นไฟล์นามสกุล .doc ทันที
+ 3. **ชื่อไฟล์** จะตั้งตามชื่อ Document Title ที่คุณตั้งไว้ในระบบเลยครับ (เช่น Internal Audit Report (Oct).doc) ไม่ต้องไปนั่ง Rename เองให้เหนื่อย
+ 4. เนื่องจากเราแทรก CSS เข้าไปในโครงสร้างให้ด้วย เวลาเปิดมาใน MS Word ตาราง Audit ที่ตีเส้นไว้ก็จะแสดงผลเป๊ะเหมือนหน้าเว็บเลยครับ
+ลองอัปเดตโค้ดและทดสอบดาวน์โหลดดูได้เลยครับ! ได้ผลลัพธ์เป็นยังไง หรือถ้าเส้นตารางตรงไหนมันเบี้ยวไปนิดหน่อยตอนเปิดใน Word บอกผมได้เลยนะครับเดี๋ยวผมปรับ CSS เฉพาะจุดให้ครับ!
